@@ -1,51 +1,84 @@
 name: WINDOWS RDP - CLOUDFLARE
+
 on:
-  workflow_dispatch
+  workflow_dispatch:
 
 jobs:
-  build:
+  rdp:
     runs-on: windows-latest
-    timeout-minutes: 9999
 
     steps:
-      - name: Setup Cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
-
       - name: Enable Windows RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
           Write-Host "✅ RDP Enabled Successfully!"
 
       - name: Set Administrator Password
         run: |
-          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "P@ssw0rd123!" -AsPlainText -Force)
           Write-Host "✅ Password Configured!"
+
+      - name: Download cloudflared for Windows
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+          Write-Host "✅ Downloaded cloudflared!"
+
+      - name: Install cloudflared to tool cache
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\cloudflared" | Out-Null
+          Move-Item -Path "cloudflared.exe" -Destination "$env:USERPROFILE\cloudflared\cloudflared.exe" -Force
+          Write-Host "✅ Installed cloudflared!"
+
+      - name: Add program tool cache folder to path
+        run: |
+          echo "$env:USERPROFILE\cloudflared" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "✅ Added cloudflared to PATH!"
 
       - name: Start Cloudflare Tunnel
         run: |
-          Write-Host "============================================"
+          Write-Host "====================================================="
           Write-Host "🚀 WINDOWS RDP - CLOUDFLARE TUNNEL"
-          Write-Host "============================================"
+          Write-Host "====================================================="
           Write-Host ""
-          Start-Process PowerShell -ArgumentList '-NoExit -Command "cloudflared tunnel --url tcp://localhost:3389"'
-          Start-Sleep -Seconds 15
+          
+          # Start cloudflared in the background and capture output to a log file
+          $logFile = "$env:TEMP\cloudflared.log"
+          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url tcp://localhost:3389" -RedirectStandardError $logFile -NoNewWindow
+          
+          Write-Host "⏳ Waiting for Cloudflare Tunnel URL..."
+          $url = $null
+          $attempts = 0
+          
+          # Retry up to 10 times (30 seconds total) to find the URL
+          while (-not $url -and $attempts -lt 10) {
+              Start-Sleep -Seconds 3
+              $attempts++
+              $content = Get-Content $logFile -ErrorAction SilentlyContinue
+              $url = $content | Select-String "trycloudflare.com" | Select-Object -First 1
+          }
+          
           Write-Host ""
-          Write-Host "✅ TUNNEL STARTED! Check separate PowerShell window for URL"
+          if ($url) {
+              Write-Host "🔗 YOUR CLOUDFLARE URL IS BELOW:"
+              Write-Host $url.Line
+          } else {
+              Write-Host "⚠️ Could not find the URL. Printing full log for debugging:"
+              Get-Content $logFile
+          }
+          
           Write-Host ""
-          Write-Host "📋 CONNECTION DETAILS:"
+          Write-Host "🔗 CONNECTION DETAILS:"
           Write-Host "   USERNAME: runneradmin"
           Write-Host "   PASSWORD: P@ssw0rd123!"
           Write-Host "   OS: Windows Server 2022"
           Write-Host "   CPU: 4 cores"
           Write-Host "   RAM: 16GB"
-          Write-Host "============================================"
+          Write-Host "====================================================="
 
       - name: Keep Session Alive
         run: |
-          Write-Host "⏳ Session Active - Keeping alive..."
+          Write-Host "🔄 Session Active - Keeping alive..."
           while ($true) {
+            Write-Host "✅ Active - $(Get-Date -Format 'HH:mm:ss')"
             Start-Sleep -Seconds 60
-            Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
           }
